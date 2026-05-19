@@ -1,0 +1,334 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  PARTNER
+  MANAGER
+  SUPER_ADMIN
+  JUNIOR
+}
+
+enum ComplianceStatus {
+  PENDING
+  COMPLETED
+  OVERDUE
+  CANCELLED
+}
+
+enum Frequency {
+  ONE_TIME
+  MONTHLY
+  QUARTERLY
+  ANNUALLY
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model Tenant {
+  id              String           @id @default(uuid())
+  firmName        String           @map("firm_name")
+  ownerName       String           @map("owner_name")
+  phone           String
+  city            String
+  icaiNumber      String?          @map("icai_number")
+  users           User[] //relation
+  clients         Client[] //relation
+  complianceItems ComplianceItem[]
+  messageLogs     MessageLog[]
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@map("tenants")
+}
+
+model User {
+  id                         String                @id @default(uuid())
+  name                       String
+  email                      String                @unique
+  passwordHash               String                @map("password_hash")
+  role                       UserRole?
+  status                     UserStatus            @default(INACTIVE)
+  tenantId                   String?               @map("tenant_id")
+  tenant                     Tenant?               @relation(fields: [tenantId], references: [id])
+  emailVerificationExpiresAt DateTime?
+  onBoardingCompleted        Boolean               @default(false)
+  hashedEmail                String?
+  createdAt                  DateTime              @default(now()) @map("created_at")
+  updatedAt                  DateTime              @updatedAt @map("updated_at")
+  userSessions               UserSession[]
+  userOnBoardings            UserOnBoarding[]
+  subscriptions              Subscription[]
+  subscriberUsers            Subscriber_User[]
+  subscriptionPayments       SubscriptionPayment[]
+  plans                      Plan[]
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+model Client {
+  id              String  @id @default(uuid())
+  name            String
+  businessName    String  @map("business_name")
+  phone           String
+  businessType    String  @map("business_type")
+  isGstRegistered Boolean @default(false) @map("is_gst_registered")
+  state           String?
+  district        String?
+  pinCode         String?
+  addressOne      String?
+  addressTwo      String?
+  optInStatus     String  @default("pending") @map("opt_in_status")
+
+  // New field
+  isRemindersPaused Boolean @default(false) @map("is_reminders_paused")
+
+  isDeleted Boolean @default(false) @map("is_deleted")
+
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  complianceItems ComplianceItem[]
+  messageLogs     MessageLog[]
+
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  clientDocuments ClientDocument[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+  @@map("clients")
+}
+
+model ComplianceItem {
+  id                String           @id @default(uuid())
+  type              String
+  dueDate           DateTime         @map("due_date")
+  description       String?
+  documentsRequired String?          @map("documents_required")
+  status            ComplianceStatus @default(PENDING)
+
+  acknowledgmentNumber String?       @map("acknowledgment_number")
+
+  frequency   Frequency @default(ONE_TIME)
+  period      String? // e.g., "October 2025" or "Q2"
+  assignedTo  String?   @map("assigned_to")
+  notes       String? // Internal CA notes
+  completedAt DateTime? @map("completed_at")
+
+  isRemindersPaused Boolean @default(false) @map("is_reminders_paused")
+
+  isDeleted Boolean @default(false) @map("is_deleted")
+
+  clientId String @map("client_id")
+  client   Client @relation(fields: [clientId], references: [id])
+
+  tenantId    String       @map("tenant_id")
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  messageLogs MessageLog[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([dueDate])
+  @@map("compliance_items")
+}
+
+// ==========================================
+// NEW MVP MODEL: MESSAGE LOG
+// ==========================================
+model MessageLog {
+  id          String        @id @default(uuid())
+  messageType String        @map("message_type") // e.g., "30_DAY", "7_DAY", "MANUAL"
+  content     String        @db.Text // The actual message text sent
+  status      MessageStatus @default(PENDING)
+  errorLog    String?       @map("error_log") // If Meta API fails, we log why
+
+  // Relations
+  clientId String @map("client_id")
+  client   Client @relation(fields: [clientId], references: [id])
+
+  complianceItemId String?         @map("compliance_item_id")
+  complianceItem   ComplianceItem? @relation(fields: [complianceItemId], references: [id])
+
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  metaMessageId     String?  @unique  @map("meta_message_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([clientId])
+  @@map("message_logs")
+}
+
+model UserSession {
+  id           String  @id @default(uuid())
+  userId       String?
+  sessionToken String?
+  user         User?   @relation(fields: [userId], references: [id])
+}
+
+model UserOnBoarding {
+  id                        String   @id @default(uuid())
+  whatsAppAccessToken       String?
+  whatsAppPhoneNumber       String?
+  whatsAppBusinessAccountID String?
+  userId                    String?
+  user                      User?    @relation(fields: [userId], references: [id])
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  UNPAID
+  CANCELED
+  INACTIVE
+}
+
+enum PaymentProvider {
+  RAZORPAY
+  PAYPAL
+  FREE_TRAIL
+}
+
+model Subscription {
+  id              String  @id @default(cuid())
+  subscription_id String? @unique()
+  customer_id     String?
+  created_by      String?
+  company_id      String?
+  planId          String?
+
+  // ✅ NEW
+  provider PaymentProvider? @default(RAZORPAY) // RAZORPAY or PAYPAL
+
+  status             SubscriptionStatus
+  trialStartsAt      DateTime?
+  trialEndsAt        DateTime?
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  subscription_data  Json?
+  created_users      Int?               @default(1)
+  amount             Decimal?           @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  plan Plan? @relation(fields: [planId], references: [id])
+  user User? @relation(fields: [created_by], references: [id], onDelete: Cascade)
+
+  subscriberUsers      Subscriber_User[]
+  subscriptionPayments SubscriptionPayment[]
+}
+
+model Subscriber_User {
+  id              String  @id @default(cuid())
+  reference_id    String?
+  user_id         String?
+  subscription_id String?
+  status          String?
+  payment_id      String?
+
+  // ✅ NEW
+  provider PaymentProvider? @default(RAZORPAY)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscription_payment SubscriptionPayment? @relation(fields: [payment_id], references: [id], onDelete: Cascade)
+  subscription         Subscription?        @relation(fields: [subscription_id], references: [subscription_id], onDelete: Cascade)
+  user                 User?                @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model SubscriptionPayment {
+  id                String  @id @default(cuid())
+  subscription_id   String?
+  payment_id        String?
+  order_id          String?
+  card              Json?
+  description       String?
+  error_description String?
+  customer_id       String?
+
+  // ✅ NEW
+  provider PaymentProvider? @default(RAZORPAY)
+
+  amount            Decimal?  @db.Decimal(10, 2)
+  user_count        Int?      @default(0)
+  card_email        String?
+  card_phone_number String?
+  payment_date      DateTime? @default(now())
+  transaction_id    String?   @default(cuid())
+  status            String?
+  currency          String?
+  payment_details   Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscription Subscription? @relation(fields: [subscription_id], references: [subscription_id], onDelete: Cascade)
+  user         User?         @relation(fields: [userId], references: [id])
+  userId       String?
+
+  subscriberUsers Subscriber_User[]
+}
+
+model Plan {
+  id                String           @id @default(cuid())
+  razor_pay_plan_id String?          @unique
+  provider          PaymentProvider? @default(RAZORPAY)
+
+  created_by       String?
+  name             String?
+  description      String?
+  price            Int?
+  currency         String?
+  trailDays        Int?
+  active           Boolean @default(true)
+  status           String?
+  recurring_amount Int?
+  interval_count   Int?
+  interval         String?
+  plan_data        Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User?          @relation(fields: [created_by], references: [id], onDelete: Cascade)
+  subscriptions Subscription[]
+}
+
+model ClientDocument {
+  id        String  @id @default(uuid())
+  client_id String?
+  file_name String
+  file_key  String
+  client    Client? @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+}
